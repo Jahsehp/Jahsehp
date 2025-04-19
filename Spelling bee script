@@ -1,0 +1,383 @@
+-- Spelling Bee Game Script
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TextService = game:GetService("TextService")
+
+-- Create remote events
+local remoteEventsFolder = Instance.new("Folder", ReplicatedStorage)
+remoteEventsFolder.Name = "RemoteEvents"
+
+local startSpellingBeeEvent = Instance.new("RemoteEvent", remoteEventsFolder)
+startSpellingBeeEvent.Name = "StartSpellingBee"
+
+local submitWordEvent = Instance.new("RemoteEvent", remoteEventsFolder)
+submitWordEvent.Name = "SubmitWord"
+
+local updateTypingSpeedEvent = Instance.new("RemoteEvent", remoteEventsFolder)
+updateTypingSpeedEvent.Name = "UpdateTypingSpeed"
+
+-- Word list (can be expanded)
+local wordList = {
+    "apple", "banana", "chocolate", "dolphin", "elephant",
+    "fantastic", "giraffe", "happiness", "internet", "jungle",
+    "kangaroo", "lighthouse", "mountain", "notebook", "oxygen",
+    "penguin", "question", "rainbow", "sunshine", "tiger",
+    "umbrella", "volcano", "waterfall", "xylophone", "yellow", "zebra"
+}
+
+-- Typing speed options (characters per second)
+local typingSpeeds = {
+    ["Auto"] = 0,      -- instant
+    ["Very Fast"] = 20,
+    ["Fast"] = 15,
+    ["Medium"] = 10,
+    ["Slow"] = 5
+}
+
+-- Player data storage
+local playerData = {}
+
+-- Function to get a random word
+local function getRandomWord()
+    return wordList[math.random(1, #wordList)]
+end
+
+-- Function to animate typing
+local function typeWord(player, word, speed)
+    local character = player.Character or player.CharacterAdded:Wait()
+    local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    
+    -- Create a billboard GUI for the word
+    local billboard = Instance.new("BillboardGui")
+    billboard.Adornee = humanoidRootPart
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.Parent = humanoidRootPart
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = ""
+    textLabel.TextColor3 = Color3.new(1, 1, 1)
+    textLabel.TextScaled = true
+    textLabel.Font = Enum.Font.SourceSansBold
+    textLabel.Parent = billboard
+    
+    if speed == 0 then -- Auto type (instant)
+        textLabel.Text = word:upper()
+    else
+        -- Animated typing
+        local typed = ""
+        for i = 1, #word do
+            typed = typed .. word:sub(i, i):upper()
+            textLabel.Text = typed
+            task.wait(1/speed)
+        end
+    end
+    
+    -- Keep the word displayed for 3 seconds
+    task.wait(3)
+    billboard:Destroy()
+end
+
+-- Function to check spelling
+local function checkSpelling(player, word, attempt)
+    -- Simple case-insensitive check
+    return word:lower() == attempt:lower()
+end
+
+-- Function to start a spelling round
+local function startSpellingRound(player)
+    local word = getRandomWord()
+    playerData[player.UserId].currentWord = word
+    playerData[player.UserId].attempts = 0
+    
+    -- Get the player's selected typing speed
+    local speed = typingSpeeds[playerData[player.UserId].typingSpeed or "Medium"]
+    
+    -- Show the word to the player with their selected typing speed
+    typeWord(player, word, speed)
+    
+    -- Update GUI
+    local gui = player:WaitForChild("PlayerGui"):WaitForChild("SpellingBeeGUI")
+    gui.MainFrame.Instructions.Text = "Spell the word you just saw!"
+    gui.MainFrame.Result.Text = ""
+    gui.MainFrame.TextBox.Text = ""
+    gui.MainFrame.TextBox:CaptureFocus()
+end
+
+-- Function to handle word submission
+local function onWordSubmitted(player, attempt)
+    local userId = player.UserId
+    if not playerData[userId] or not playerData[userId].currentWord then return end
+    
+    playerData[userId].attempts = (playerData[userId].attempts or 0) + 1
+    
+    local correctWord = playerData[userId].currentWord
+    local isCorrect = checkSpelling(player, correctWord, attempt)
+    
+    local gui = player:WaitForChild("PlayerGui"):WaitForChild("SpellingBeeGUI")
+    local resultText = gui.MainFrame.Result
+    
+    if isCorrect then
+        resultText.Text = "Correct! Well done!"
+        resultText.TextColor3 = Color3.new(0, 1, 0)
+        playerData[userId].score = (playerData[userId].score or 0) + 1
+        gui.MainFrame.Score.Text = "Score: " .. playerData[userId].score
+        
+        -- Start a new round after 2 seconds
+        task.delay(2, function()
+            startSpellingRound(player)
+        end)
+    else
+        if playerData[userId].attempts >= 3 then
+            resultText.Text = "The word was: " .. correctWord:upper()
+            resultText.TextColor3 = Color3.new(1, 0, 0)
+            
+            -- Start a new round after 3 seconds
+            task.delay(3, function()
+                startSpellingRound(player)
+            end)
+        else
+            resultText.Text = "Try again! (" .. (3 - playerData[userId].attempts) .. " attempts left)"
+            resultText.TextColor3 = Color3.new(1, 0.5, 0)
+            gui.MainFrame.TextBox:CaptureFocus()
+        end
+    end
+end
+
+-- Function to handle typing speed changes
+local function onTypingSpeedChanged(player, speed)
+    if typingSpeeds[speed] then
+        playerData[player.UserId].typingSpeed = speed
+    end
+end
+
+-- Function to create the GUI
+local function createSpellingBeeGUI(player)
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "SpellingBeeGUI"
+    gui.ResetOnSpawn = false
+    gui.Parent = player:WaitForChild("PlayerGui")
+    
+    -- Main Frame
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0.6, 0, 0.7, 0)
+    mainFrame.Position = UDim2.new(0.2, 0, 0.15, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 80)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = gui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0.05, 0)
+    corner.Parent = mainFrame
+    
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(0.8, 0, 0.15, 0)
+    title.Position = UDim2.new(0.1, 0, 0.05, 0)
+    title.Text = "SPELLING BEE"
+    title.TextColor3 = Color3.new(1, 1, 1)
+    title.TextScaled = true
+    title.Font = Enum.Font.GothamBold
+    title.BackgroundTransparency = 1
+    title.Parent = mainFrame
+    
+    -- Instructions
+    local instructions = Instance.new("TextLabel")
+    instructions.Name = "Instructions"
+    instructions.Size = UDim2.new(0.8, 0, 0.2, 0)
+    instructions.Position = UDim2.new(0.1, 0, 0.2, 0)
+    instructions.Text = "A word will appear above your character. Type it correctly to score points!"
+    instructions.TextColor3 = Color3.new(1, 1, 1)
+    instructions.TextWrapped = true
+    instructions.TextScaled = true
+    instructions.BackgroundTransparency = 1
+    instructions.Font = Enum.Font.Gotham
+    instructions.Parent = mainFrame
+    
+    -- Text Box
+    local textBox = Instance.new("TextBox")
+    textBox.Name = "TextBox"
+    textBox.Size = UDim2.new(0.6, 0, 0.1, 0)
+    textBox.Position = UDim2.new(0.2, 0, 0.45, 0)
+    textBox.PlaceholderText = "Type the word here"
+    textBox.Text = ""
+    textBox.TextScaled = true
+    textBox.ClearTextOnFocus = false
+    textBox.TextColor3 = Color3.new(0, 0, 0)
+    textBox.BackgroundColor3 = Color3.new(1, 1, 1)
+    textBox.Parent = mainFrame
+    
+    local textBoxCorner = Instance.new("UICorner")
+    textBoxCorner.CornerRadius = UDim.new(0.2, 0)
+    textBoxCorner.Parent = textBox
+    
+    -- Submit Button
+    local submitButton = Instance.new("TextButton")
+    submitButton.Name = "SubmitButton"
+    submitButton.Size = UDim2.new(0.4, 0, 0.1, 0)
+    submitButton.Position = UDim2.new(0.3, 0, 0.6, 0)
+    submitButton.Text = "SUBMIT"
+    submitButton.TextColor3 = Color3.new(1, 1, 1)
+    submitButton.TextScaled = true
+    submitButton.Font = Enum.Font.GothamBold
+    submitButton.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
+    submitButton.Parent = mainFrame
+    
+    local submitCorner = Instance.new("UICorner")
+    submitCorner.CornerRadius = UDim.new(0.2, 0)
+    submitCorner.Parent = submitButton
+    
+    -- Result Display
+    local result = Instance.new("TextLabel")
+    result.Name = "Result"
+    result.Size = UDim2.new(0.8, 0, 0.15, 0)
+    result.Position = UDim2.new(0.1, 0, 0.75, 0)
+    result.Text = ""
+    result.TextColor3 = Color3.new(1, 1, 1)
+    result.TextWrapped = true
+    result.TextScaled = true
+    result.BackgroundTransparency = 1
+    result.Font = Enum.Font.Gotham
+    result.Parent = mainFrame
+    
+    -- Score Display
+    local score = Instance.new("TextLabel")
+    score.Name = "Score"
+    score.Size = UDim2.new(0.3, 0, 0.1, 0)
+    score.Position = UDim2.new(0.7, 0, 0.05, 0)
+    score.Text = "Score: 0"
+    score.TextColor3 = Color3.new(1, 1, 1)
+    score.TextScaled = true
+    score.BackgroundTransparency = 1
+    score.Font = Enum.Font.GothamBold
+    score.TextXAlignment = Enum.TextXAlignment.Right
+    score.Parent = mainFrame
+    
+    -- Speed Selection
+    local speedFrame = Instance.new("Frame")
+    speedFrame.Name = "SpeedFrame"
+    speedFrame.Size = UDim2.new(0.8, 0, 0.15, 0)
+    speedFrame.Position = UDim2.new(0.1, 0, 0.85, 0)
+    speedFrame.BackgroundTransparency = 1
+    speedFrame.Parent = mainFrame
+    
+    local speedLabel = Instance.new("TextLabel")
+    speedLabel.Name = "SpeedLabel"
+    speedLabel.Size = UDim2.new(0.4, 0, 1, 0)
+    speedLabel.Position = UDim2.new(0, 0, 0, 0)
+    speedLabel.Text = "Typing Speed:"
+    speedLabel.TextColor3 = Color3.new(1, 1, 1)
+    speedLabel.TextScaled = true
+    speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    speedLabel.BackgroundTransparency = 1
+    speedLabel.Font = Enum.Font.Gotham
+    speedLabel.Parent = speedFrame
+    
+    local speedDropdown = Instance.new("TextButton")
+    speedDropdown.Name = "SpeedDropdown"
+    speedDropdown.Size = UDim2.new(0.5, 0, 0.8, 0)
+    speedDropdown.Position = UDim2.new(0.4, 0, 0.1, 0)
+    speedDropdown.Text = "Medium"
+    speedDropdown.TextColor3 = Color3.new(0, 0, 0)
+    speedDropdown.TextScaled = true
+    speedDropdown.Font = Enum.Font.Gotham
+    speedDropdown.BackgroundColor3 = Color3.new(1, 1, 1)
+    speedDropdown.Parent = speedFrame
+    
+    local dropdownCorner = Instance.new("UICorner")
+    dropdownCorner.CornerRadius = UDim.new(0.2, 0)
+    dropdownCorner.Parent = speedDropdown
+    
+    -- Dropdown options (will appear when clicked)
+    local dropdownOptions = Instance.new("Frame")
+    dropdownOptions.Name = "DropdownOptions"
+    dropdownOptions.Size = UDim2.new(1, 0, 0, 0) -- Will be expanded when shown
+    dropdownOptions.Position = UDim2.new(0, 0, 1, 5)
+    dropdownOptions.BackgroundColor3 = Color3.fromRGB(70, 70, 90)
+    dropdownOptions.Visible = false
+    dropdownOptions.Parent = speedDropdown
+    
+    local dropdownList = Instance.new("UIListLayout")
+    dropdownList.Parent = dropdownOptions
+    
+    -- Create speed options
+    for speedName in pairs(typingSpeeds) do
+        local option = Instance.new("TextButton")
+        option.Size = UDim2.new(1, 0, 0, 30)
+        option.Text = speedName
+        option.TextColor3 = Color3.new(1, 1, 1)
+        option.TextScaled = true
+        option.BackgroundTransparency = 1
+        option.Parent = dropdownOptions
+        
+        option.MouseButton1Click:Connect(function()
+            speedDropdown.Text = speedName
+            dropdownOptions.Visible = false
+            updateTypingSpeedEvent:FireClient(player, speedName)
+        end)
+    end
+    
+    -- Toggle dropdown visibility
+    speedDropdown.MouseButton1Click:Connect(function()
+        dropdownOptions.Visible = not dropdownOptions.Visible
+        if dropdownOptions.Visible then
+            dropdownOptions.Size = UDim2.new(1, 0, 0, #dropdownOptions:GetChildren() * 30 - 1)
+        else
+            dropdownOptions.Size = UDim2.new(1, 0, 0, 0)
+        end
+    end)
+    
+    -- Connect submit button
+    submitButton.MouseButton1Click:Connect(function()
+        submitWordEvent:FireServer(textBox.Text)
+    end)
+    
+    -- Press Enter to submit
+    textBox.FocusLost:Connect(function(enterPressed)
+        if enterPressed then
+            submitWordEvent:FireServer(textBox.Text)
+        end
+    end)
+    
+    return gui
+end
+
+-- Player joining
+Players.PlayerAdded:Connect(function(player)
+    -- Initialize player data
+    playerData[player.UserId] = {
+        score = 0,
+        typingSpeed = "Medium",
+        currentWord = nil,
+        attempts = 0
+    }
+    
+    -- Create GUI
+    local gui = createSpellingBeeGUI(player)
+    
+    -- Start the game when GUI is ready
+    task.wait(1)
+    startSpellingRound(player)
+end)
+
+-- Player leaving
+Players.PlayerRemoving:Connect(function(player)
+    playerData[player.UserId] = nil
+end)
+
+-- Remote event connections
+startSpellingBeeEvent.OnServerEvent:Connect(function(player)
+    startSpellingRound(player)
+end)
+
+submitWordEvent.OnServerEvent:Connect(function(player, attempt)
+    onWordSubmitted(player, attempt)
+end)
+
+updateTypingSpeedEvent.OnServerEvent:Connect(function(player, speed)
+    onTypingSpeedChanged(player, speed)
+end)
